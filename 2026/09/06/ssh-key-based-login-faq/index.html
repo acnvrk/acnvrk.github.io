@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="en-US">
+  <head>
+    <meta charset="UTF-8">
+
+<!-- Begin Jekyll SEO tag v2.9.0 -->
+<title>Ssh Key Based Login Faq | Notes by Kishore</title>
+<meta name="generator" content="Jekyll v4.4.1" />
+<meta property="og:title" content="Ssh Key Based Login Faq" />
+<meta property="og:locale" content="en_US" />
+<meta name="description" content="Key-Based SSH Login — Cross-OS FAQ" />
+<meta name="twitter:description" property="og:description" content="Key-Based SSH Login — Cross-OS FAQ" />
+<link rel="canonical" href="https://acnvrk.pages.dev/2026/09/06/ssh-key-based-login-faq/" />
+<meta property="og:url" content="https://acnvrk.pages.dev/2026/09/06/ssh-key-based-login-faq/" />
+<meta property="og:site_name" content="Notes by Kishore" />
+<meta property="og:type" content="article" />
+<meta property="article:published_time" content="2026-09-06T00:00:00+00:00" />
+<meta property="article:modified_time" content="2026-09-06T00:00:00+00:00" />
+<meta name="twitter:card" content="summary" />
+<meta name="twitter:title" content="Ssh Key Based Login Faq" />
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"BlogPosting","dateModified":"2026-09-06T00:00:00+00:00","datePublished":"2026-09-06T00:00:00+00:00","description":"Key-Based SSH Login — Cross-OS FAQ","headline":"Ssh Key Based Login Faq","mainEntityOfPage":{"@type":"WebPage","@id":"https://acnvrk.pages.dev/2026/09/06/ssh-key-based-login-faq/"},"url":"https://acnvrk.pages.dev/2026/09/06/ssh-key-based-login-faq/"}</script>
+<!-- End Jekyll SEO tag -->
+
+    <link rel="preconnect" href="https://fonts.gstatic.com">
+    <link rel="preload" href="https://fonts.googleapis.com/css?family=Open+Sans:400,700&display=swap" as="style" type="text/css" crossorigin>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#157878">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <link rel="stylesheet" href="/assets/css/style.css?v=">
+    <!-- start custom head snippets, customize with your own _includes/head-custom.html file -->
+
+<!-- Setup Google Analytics -->
+
+
+
+<!-- You can set your favicon here -->
+<!-- link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" -->
+
+<!-- end custom head snippets -->
+
+  </head>
+  <body>
+    <a id="skip-to-content" href="#content">Skip to the content.</a>
+
+    <header class="page-header" role="banner">
+      <h1 class="project-name">Ssh Key Based Login Faq</h1>
+      <h2 class="project-tagline">Random brain dump notes</h2>
+      
+      
+    </header>
+
+    <main id="content" class="main-content" role="main">
+      <h1 id="key-based-ssh-login--cross-os-faq">Key-Based SSH Login — Cross-OS FAQ</h1>
+
+<p>A practical guide to setting up passwordless SSH login between any two machines,
+where <strong>any OS (macOS, Linux, Windows) can be the server or the client</strong>.</p>
+
+<p>The whole process is four tasks:</p>
+
+<ol>
+  <li><strong>Create a key pair</strong> (on the client) — identical on every OS.</li>
+  <li><strong>Put the public key on the server</strong> — depends only on the <strong>server’s</strong> OS.</li>
+  <li><strong>Configure the client</strong> with an <code class="language-plaintext highlighter-rouge">~/.ssh/config</code> alias — identical on every OS.</li>
+  <li><em>(Optional)</em> <strong>Load the key into an agent</strong> so a passphrase is typed once.</li>
+</ol>
+
+<p>Do those and <code class="language-plaintext highlighter-rouge">ssh myserver</code> logs you in with no password.</p>
+
+<hr />
+
+<h2 id="concepts">Concepts</h2>
+
+<p><strong>Q: What is “the server” vs “the client”?</strong></p>
+
+<ul>
+  <li><strong>Client</strong> = the machine you connect <strong>from</strong> (where you type <code class="language-plaintext highlighter-rouge">ssh</code>).</li>
+  <li><strong>Server</strong> = the machine you connect <strong>to</strong> (it runs the SSH <em>server</em>, <code class="language-plaintext highlighter-rouge">sshd</code>).</li>
+</ul>
+
+<p>Either role can be any OS. A Windows laptop can SSH into a Mac; a Mac can SSH
+into a Linux box; a Linux box can SSH into Windows. The steps below are labelled
+by role, so mix and match.</p>
+
+<p><strong>Q: How does key-based login actually work?</strong></p>
+
+<p>You generate a <strong>key pair</strong>: a <strong>private key</strong> (stays secret on the client,
+never leaves it) and a <strong>public key</strong> (safe to share). You place the public key
+in the server’s <code class="language-plaintext highlighter-rouge">authorized_keys</code>. At login, the server challenges the client to
+prove it holds the matching private key — no password crosses the network.</p>
+
+<p><strong>Q: What has to be true on each machine before I start?</strong></p>
+
+<ul>
+  <li><strong>Client:</strong> an SSH client. Built in on macOS, Linux, and Windows 10/11
+(<code class="language-plaintext highlighter-rouge">ssh</code> on the PATH).</li>
+  <li><strong>Server:</strong> an SSH <strong>server</strong> installed and running:
+    <ul>
+      <li><strong>Linux:</strong> <code class="language-plaintext highlighter-rouge">openssh-server</code> (usually preinstalled; <code class="language-plaintext highlighter-rouge">sudo apt install openssh-server</code> if not).</li>
+      <li><strong>macOS:</strong> enable <strong>Remote Login</strong> (see below) — nothing to install.</li>
+      <li><strong>Windows:</strong> install the <strong>OpenSSH Server</strong> optional feature and start <code class="language-plaintext highlighter-rouge">sshd</code>
+(see the Windows server section).</li>
+    </ul>
+  </li>
+</ul>
+
+<hr />
+
+<h2 id="task-1--create-a-key-pair-on-the-client">Task 1 — Create a key pair (on the CLIENT)</h2>
+
+<p><strong>Q: How do I create a key? (same command on macOS, Linux, and Windows)</strong></p>
+
+<p>Open a terminal (macOS/Linux) or PowerShell (Windows) and run:</p>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>ssh-keygen <span class="nt">-t</span> ed25519 <span class="nt">-C</span> <span class="s2">"you@your-machine"</span>
+</code></pre></div></div>
+
+<ul>
+  <li>Press <strong>Enter</strong> to accept the default location.</li>
+  <li>Enter a <strong>passphrase</strong> (recommended) or leave it empty for fully unattended login.</li>
+  <li><code class="language-plaintext highlighter-rouge">-t ed25519</code> is the modern, recommended key type. If you must interoperate
+with very old servers that don’t support it, use <code class="language-plaintext highlighter-rouge">-t rsa -b 4096</code> instead.</li>
+</ul>
+
+<p>This creates two files. <strong>Never share or copy the private one.</strong></p>
+
+<p><strong>Q: Where are my keys stored?</strong></p>
+
+<table>
+  <thead>
+    <tr>
+      <th>OS</th>
+      <th>Private key</th>
+      <th>Public key (<code class="language-plaintext highlighter-rouge">.pub</code>)</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>macOS</td>
+      <td><code class="language-plaintext highlighter-rouge">~/.ssh/id_ed25519</code></td>
+      <td><code class="language-plaintext highlighter-rouge">~/.ssh/id_ed25519.pub</code></td>
+    </tr>
+    <tr>
+      <td>Linux</td>
+      <td><code class="language-plaintext highlighter-rouge">~/.ssh/id_ed25519</code></td>
+      <td><code class="language-plaintext highlighter-rouge">~/.ssh/id_ed25519.pub</code></td>
+    </tr>
+    <tr>
+      <td>Windows</td>
+      <td><code class="language-plaintext highlighter-rouge">C:\Users\&lt;you&gt;\.ssh\id_ed25519</code></td>
+      <td><code class="language-plaintext highlighter-rouge">C:\Users\&lt;you&gt;\.ssh\id_ed25519.pub</code></td>
+    </tr>
+  </tbody>
+</table>
+
+<p>On Windows, <code class="language-plaintext highlighter-rouge">%USERPROFILE%\.ssh\</code> is the same folder.</p>
+
+<p><strong>Q: What does a public key look like?</strong></p>
+
+<p>One single line, e.g.:</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI... you@your-machine
+</code></pre></div></div>
+
+<p>That entire line is what goes into the server’s <code class="language-plaintext highlighter-rouge">authorized_keys</code>.</p>
+
+<hr />
+
+<h2 id="task-2--put-the-public-key-on-the-server">Task 2 — Put the PUBLIC key on the SERVER</h2>
+
+<p>Pick the section that matches the <strong>server’s</strong> OS. The goal is always the same:
+add your public-key line to the right <code class="language-plaintext highlighter-rouge">authorized_keys</code> file with correct
+permissions.</p>
+
+<h3 id="server-is-linux-or-macos">Server is Linux or macOS</h3>
+
+<p><strong>On a macOS server, first enable Remote Login:</strong></p>
+
+<ul>
+  <li><strong>System Settings → General → Sharing → Remote Login → On</strong>, or from a terminal:
+    <div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nb">sudo </span>systemsetup <span class="nt">-setremotelogin</span> on
+</code></pre></div>    </div>
+  </li>
+</ul>
+
+<p><strong>Then add the key.</strong> The target file is <code class="language-plaintext highlighter-rouge">~/.ssh/authorized_keys</code> in the
+<strong>server</strong> user’s home directory, and permissions must be strict.</p>
+
+<p><strong>Easiest — from a macOS/Linux client</strong>, use <code class="language-plaintext highlighter-rouge">ssh-copy-id</code> (it creates the
+folder, appends the key, and fixes permissions for you):</p>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>ssh-copy-id <span class="nt">-i</span> ~/.ssh/id_ed25519.pub user@server
+</code></pre></div></div>
+
+<p><strong>From a Windows client</strong> (no <code class="language-plaintext highlighter-rouge">ssh-copy-id</code>), pipe the key over in PowerShell:</p>
+
+<div class="language-powershell highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kr">type</span><span class="w"> </span><span class="nv">$</span><span class="nn">env</span><span class="p">:</span><span class="nv">USERPROFILE</span><span class="n">\.ssh\id_ed25519.pub</span><span class="w"> </span><span class="o">|</span><span class="w"> </span><span class="n">ssh</span><span class="w"> </span><span class="nx">user</span><span class="err">@</span><span class="nx">server</span><span class="w"> </span><span class="s2">"mkdir -p ~/.ssh &amp;&amp; chmod 700 ~/.ssh &amp;&amp; cat &gt;&gt; ~/.ssh/authorized_keys &amp;&amp; chmod 600 ~/.ssh/authorized_keys"</span><span class="w">
+</span></code></pre></div></div>
+
+<p><strong>Manual method (any client):</strong> open the <code class="language-plaintext highlighter-rouge">.pub</code> file, copy the single line, then
+on the server:</p>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nb">mkdir</span> <span class="nt">-p</span> ~/.ssh <span class="o">&amp;&amp;</span> <span class="nb">chmod </span>700 ~/.ssh
+<span class="nb">echo</span> <span class="s2">"ssh-ed25519 AAAA...your-key... you@your-machine"</span> <span class="o">&gt;&gt;</span> ~/.ssh/authorized_keys
+<span class="nb">chmod </span>600 ~/.ssh/authorized_keys
+</code></pre></div></div>
+
+<blockquote>
+  <p><strong>Permissions matter.</strong> <code class="language-plaintext highlighter-rouge">~/.ssh</code> must be <code class="language-plaintext highlighter-rouge">700</code> and <code class="language-plaintext highlighter-rouge">authorized_keys</code> <code class="language-plaintext highlighter-rouge">600</code>,
+owned by the user. If the home directory is group- or world-writable, sshd
+silently refuses the key. This is the #1 cause of “Permission denied (publickey)”.</p>
+</blockquote>
+
+<h3 id="server-is-windows">Server is Windows</h3>
+
+<p><strong>First, enable the OpenSSH Server</strong> (elevated PowerShell, one time):</p>
+
+<div class="language-powershell highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">Add-WindowsCapability</span><span class="w"> </span><span class="nt">-Online</span><span class="w"> </span><span class="nt">-Name</span><span class="w"> </span><span class="nx">OpenSSH.Server~~~~0.0.1.0</span><span class="w">
+</span><span class="n">Set-Service</span><span class="w"> </span><span class="nt">-Name</span><span class="w"> </span><span class="nx">sshd</span><span class="w"> </span><span class="nt">-StartupType</span><span class="w"> </span><span class="nx">Automatic</span><span class="w">
+</span><span class="n">Start-Service</span><span class="w"> </span><span class="nx">sshd</span><span class="w">
+</span></code></pre></div></div>
+
+<p><strong>Then add the key — the file location depends on the server account type:</strong></p>
+
+<ul>
+  <li><strong>Standard (non-admin) user:</strong> <code class="language-plaintext highlighter-rouge">C:\Users\&lt;user&gt;\.ssh\authorized_keys</code></li>
+  <li><strong>Administrator account:</strong> <code class="language-plaintext highlighter-rouge">C:\ProgramData\ssh\administrators_authorized_keys</code>
+— a <strong>single shared file for all admins</strong>. This is the Windows gotcha that
+trips up almost everyone: keys in the user’s own <code class="language-plaintext highlighter-rouge">.ssh\authorized_keys</code> are
+<strong>ignored</strong> for admin accounts.</li>
+</ul>
+
+<p><strong>For a standard user</strong>, from a macOS/Linux client:</p>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>ssh-copy-id user@windows-server
+</code></pre></div></div>
+
+<p><strong>For an administrator account</strong>, paste the key into the shared file and fix its
+ACL (run on the Windows server in elevated PowerShell):</p>
+
+<div class="language-powershell highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c"># Paste your public-key line into the file (replace the key text):</span><span class="w">
+</span><span class="n">Add-Content</span><span class="w"> </span><span class="nt">-Path</span><span class="w"> </span><span class="nx">C:\ProgramData\ssh\administrators_authorized_keys</span><span class="w"> </span><span class="nt">-Value</span><span class="w"> </span><span class="s2">"ssh-ed25519 AAAA...your-key... you@your-machine"</span><span class="w">
+
+</span><span class="c"># Lock the file down or sshd will refuse it:</span><span class="w">
+</span><span class="n">icacls</span><span class="w"> </span><span class="nx">C:\ProgramData\ssh\administrators_authorized_keys</span><span class="w"> </span><span class="nx">/inheritance:r</span><span class="w"> </span><span class="nx">/grant</span><span class="w"> </span><span class="s2">"Administrators:F"</span><span class="w"> </span><span class="nx">/grant</span><span class="w"> </span><span class="s2">"SYSTEM:F"</span><span class="w">
+</span></code></pre></div></div>
+
+<blockquote>
+  <p><strong>Two Windows-server notes:</strong></p>
+  <ul>
+    <li>The permissions/ACL step is mandatory — a too-permissive
+<code class="language-plaintext highlighter-rouge">administrators_authorized_keys</code> is silently rejected.</li>
+    <li>To make PowerShell the shell you land in on connect:
+      <div class="language-powershell highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">New-ItemProperty</span><span class="w"> </span><span class="nt">-Path</span><span class="w"> </span><span class="s2">"HKLM:\SOFTWARE\OpenSSH"</span><span class="w"> </span><span class="nt">-Name</span><span class="w"> </span><span class="nx">DefaultShell</span><span class="w"> </span><span class="nt">-Value</span><span class="w"> </span><span class="s2">"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"</span><span class="w"> </span><span class="nt">-PropertyType</span><span class="w"> </span><span class="nx">String</span><span class="w"> </span><span class="nt">-Force</span><span class="w">
+</span></code></pre></div>      </div>
+    </li>
+  </ul>
+</blockquote>
+
+<hr />
+
+<h2 id="task-3--configure-the-client-for-auto-login">Task 3 — Configure the CLIENT for auto-login</h2>
+
+<p><strong>Q: How do I set up <code class="language-plaintext highlighter-rouge">~/.ssh/config</code> so I can just type a short name?</strong></p>
+
+<p>Create or edit the SSH client config file and add a <code class="language-plaintext highlighter-rouge">Host</code> block per server.
+The <strong>format is identical on every OS</strong>; only the file location differs.</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Client OS</th>
+      <th>Config file path</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>macOS</td>
+      <td><code class="language-plaintext highlighter-rouge">~/.ssh/config</code></td>
+    </tr>
+    <tr>
+      <td>Linux</td>
+      <td><code class="language-plaintext highlighter-rouge">~/.ssh/config</code></td>
+    </tr>
+    <tr>
+      <td>Windows</td>
+      <td><code class="language-plaintext highlighter-rouge">C:\Users\&lt;you&gt;\.ssh\config</code></td>
+    </tr>
+  </tbody>
+</table>
+
+<p>Example <code class="language-plaintext highlighter-rouge">config</code>:</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Host win11
+    HostName 192.168.1.50
+    User kishore
+    IdentityFile ~/.ssh/id_ed25519
+    Port 22
+
+Host macmini
+    HostName 192.168.1.60
+    User kishore
+    IdentityFile ~/.ssh/id_ed25519
+
+# Apply keepalives to every host
+Host *
+    ServerAliveInterval 60
+    ServerAliveCountMax 3
+    AddKeysToAgent yes
+</code></pre></div></div>
+
+<p>Now instead of <code class="language-plaintext highlighter-rouge">ssh -i ~/.ssh/id_ed25519 kishore@192.168.1.50</code> you just run:</p>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>ssh win11
+</code></pre></div></div>
+
+<p><strong>Q: Anything special about the config on Windows?</strong></p>
+
+<ul>
+  <li><code class="language-plaintext highlighter-rouge">~</code> resolves to <code class="language-plaintext highlighter-rouge">C:\Users\&lt;you&gt;</code>, so <code class="language-plaintext highlighter-rouge">IdentityFile ~/.ssh/id_ed25519</code> works.</li>
+  <li>If you write a full path, use forward slashes (<code class="language-plaintext highlighter-rouge">C:/Users/you/.ssh/id_ed25519</code>)
+or escaped backslashes to avoid quoting issues.</li>
+</ul>
+
+<p><strong>Q: What do the fields mean?</strong></p>
+
+<ul>
+  <li><code class="language-plaintext highlighter-rouge">Host</code> — the short alias you type.</li>
+  <li><code class="language-plaintext highlighter-rouge">HostName</code> — the actual IP or DNS name.</li>
+  <li><code class="language-plaintext highlighter-rouge">User</code> — the account <strong>on the server</strong>.</li>
+  <li><code class="language-plaintext highlighter-rouge">IdentityFile</code> — the <strong>private</strong> key to authenticate with.</li>
+  <li><code class="language-plaintext highlighter-rouge">Port</code> — only needed if the server isn’t on 22.</li>
+</ul>
+
+<hr />
+
+<h2 id="task-4-optional--use-ssh-agent-for-passphrase-protected-keys">Task 4 (Optional) — Use ssh-agent for passphrase-protected keys</h2>
+
+<p>If you gave your key a passphrase (recommended), an <strong>agent</strong> holds the
+decrypted key so you type the passphrase once per session instead of every login.</p>
+
+<p><strong>macOS</strong> — store the passphrase in the Keychain so it’s remembered across
+reboots:</p>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>ssh-add <span class="nt">--apple-use-keychain</span> ~/.ssh/id_ed25519
+</code></pre></div></div>
+
+<p>Add to the top of <code class="language-plaintext highlighter-rouge">~/.ssh/config</code>:</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Host *
+    UseKeychain yes
+    AddKeysToAgent yes
+</code></pre></div></div>
+
+<p><strong>Linux</strong> — start the agent and add the key:</p>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nb">eval</span> <span class="s2">"</span><span class="si">$(</span>ssh-agent <span class="nt">-s</span><span class="si">)</span><span class="s2">"</span>
+ssh-add ~/.ssh/id_ed25519
+</code></pre></div></div>
+
+<p>(Most desktop environments start an agent automatically; <code class="language-plaintext highlighter-rouge">AddKeysToAgent yes</code>
+in config loads keys on first use.)</p>
+
+<p><strong>Windows</strong> — enable and start the built-in agent service (elevated PowerShell,
+one time), then add the key:</p>
+
+<div class="language-powershell highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">Get-Service</span><span class="w"> </span><span class="nx">ssh-agent</span><span class="w"> </span><span class="o">|</span><span class="w"> </span><span class="n">Set-Service</span><span class="w"> </span><span class="nt">-StartupType</span><span class="w"> </span><span class="nx">Automatic</span><span class="w">
+</span><span class="n">Start-Service</span><span class="w"> </span><span class="nx">ssh-agent</span><span class="w">
+</span><span class="n">ssh-add</span><span class="w"> </span><span class="nv">$</span><span class="nn">env</span><span class="p">:</span><span class="nv">USERPROFILE</span><span class="nx">\.ssh\id_ed25519</span><span class="w">
+</span></code></pre></div></div>
+
+<hr />
+
+<h2 id="permissions-quick-reference">Permissions quick reference</h2>
+
+<p>Wrong permissions are the most common reason keys are ignored.</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Location</th>
+      <th>macOS / Linux</th>
+      <th>Windows</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">.ssh</code> folder</td>
+      <td><code class="language-plaintext highlighter-rouge">700</code></td>
+      <td>User has full control; not open to others</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">authorized_keys</code> (standard user)</td>
+      <td><code class="language-plaintext highlighter-rouge">600</code></td>
+      <td>User full control</td>
+    </tr>
+    <tr>
+      <td>Admin <code class="language-plaintext highlighter-rouge">administrators_authorized_keys</code></td>
+      <td>n/a</td>
+      <td><code class="language-plaintext highlighter-rouge">icacls ... /inheritance:r /grant Administrators:F /grant SYSTEM:F</code></td>
+    </tr>
+    <tr>
+      <td>Private key on client</td>
+      <td><code class="language-plaintext highlighter-rouge">600</code></td>
+      <td>Only your account should have access</td>
+    </tr>
+    <tr>
+      <td>Home directory</td>
+      <td>not group/world-writable</td>
+      <td>—</td>
+    </tr>
+  </tbody>
+</table>
+
+<hr />
+
+<h2 id="troubleshooting-faq">Troubleshooting FAQ</h2>
+
+<p><strong>Q: I still get asked for a password.</strong></p>
+
+<p>The server didn’t accept the key, so it fell back to password auth. Check, in order:</p>
+<ol>
+  <li>Public key is actually in the server’s <code class="language-plaintext highlighter-rouge">authorized_keys</code> (and, on a Windows
+<strong>admin</strong> account, in <code class="language-plaintext highlighter-rouge">administrators_authorized_keys</code>, not the user file).</li>
+  <li>Server-side permissions (<code class="language-plaintext highlighter-rouge">~/.ssh</code> = 700, <code class="language-plaintext highlighter-rouge">authorized_keys</code> = 600; Windows ACL set).</li>
+  <li>The client is offering the right key — <code class="language-plaintext highlighter-rouge">IdentityFile</code> points at the private key.</li>
+</ol>
+
+<p><strong>Q: “Permission denied (publickey).”</strong></p>
+
+<p>Same causes as above, plus: wrong <code class="language-plaintext highlighter-rouge">User</code>, wrong key, or the server has public-key
+auth disabled. Run a verbose connection to see exactly which key is tried and why
+it’s rejected:</p>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>ssh <span class="nt">-v</span> user@server        <span class="c"># add more v's (-vv, -vvv) for detail</span>
+</code></pre></div></div>
+
+<p><strong>Q: “Unprotected private key file” / “bad permissions” on the client.</strong></p>
+
+<p>Your private key is readable by others. Tighten it:</p>
+<ul>
+  <li>macOS/Linux: <code class="language-plaintext highlighter-rouge">chmod 600 ~/.ssh/id_ed25519</code></li>
+  <li>Windows: remove inherited permissions and grant only your account (via file
+Properties → Security, or <code class="language-plaintext highlighter-rouge">icacls</code>).</li>
+</ul>
+
+<p><strong>Q: Windows server — my key works for a standard user but not for my admin account.</strong></p>
+
+<p>You put it in the wrong file. Admin accounts read
+<code class="language-plaintext highlighter-rouge">C:\ProgramData\ssh\administrators_authorized_keys</code>, and that file needs the
+<code class="language-plaintext highlighter-rouge">icacls</code> lockdown shown above.</p>
+
+<p><strong>Q: macOS server refuses all connections.</strong></p>
+
+<p><strong>Remote Login</strong> isn’t enabled. Turn it on under
+System Settings → General → Sharing → Remote Login.</p>
+
+<p><strong>Q: How do I confirm the config alias resolves correctly?</strong></p>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>ssh <span class="nt">-G</span> win11          <span class="c"># prints the effective settings for that alias</span>
+</code></pre></div></div>
+
+<hr />
+
+<h2 id="optional-hardening--disable-password-login-once-keys-work">Optional hardening — disable password login once keys work</h2>
+
+<p>After you’ve <strong>confirmed key login works</strong>, you can turn off password auth on the
+server so only keys are accepted.</p>
+
+<ul>
+  <li><strong>Linux/macOS:</strong> edit <code class="language-plaintext highlighter-rouge">/etc/ssh/sshd_config</code>, set <code class="language-plaintext highlighter-rouge">PasswordAuthentication no</code>,
+then reload: <code class="language-plaintext highlighter-rouge">sudo systemctl restart sshd</code> (Linux) or toggle Remote Login off/on (macOS).</li>
+  <li><strong>Windows:</strong> edit <code class="language-plaintext highlighter-rouge">C:\ProgramData\ssh\sshd_config</code>, set
+<code class="language-plaintext highlighter-rouge">PasswordAuthentication no</code>, then <code class="language-plaintext highlighter-rouge">Restart-Service sshd</code>.</li>
+</ul>
+
+<blockquote>
+  <p>Don’t do this until at least one key login succeeds, or you can lock yourself
+out — keep a second session open while you test.</p>
+</blockquote>
+
+
+      <footer class="site-footer">
+        
+        <span class="site-footer-credits">This page was generated by <a href="https://pages.github.com">GitHub Pages</a>.</span>
+      </footer>
+    </main>
+  </body>
+</html>

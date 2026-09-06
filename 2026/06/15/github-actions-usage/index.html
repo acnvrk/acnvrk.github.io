@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en-US">
+  <head>
+    <meta charset="UTF-8">
+
+<!-- Begin Jekyll SEO tag v2.9.0 -->
+<title>GitHub actions usage | Notes by Kishore</title>
+<meta name="generator" content="Jekyll v4.4.1" />
+<meta property="og:title" content="GitHub actions usage" />
+<meta property="og:locale" content="en_US" />
+<meta name="description" content="Powershell script" />
+<meta name="twitter:description" property="og:description" content="Powershell script" />
+<link rel="canonical" href="https://acnvrk.pages.dev/2026/06/15/github-actions-usage/" />
+<meta property="og:url" content="https://acnvrk.pages.dev/2026/06/15/github-actions-usage/" />
+<meta property="og:site_name" content="Notes by Kishore" />
+<meta property="og:type" content="article" />
+<meta property="article:published_time" content="2026-06-15T00:00:00+00:00" />
+<meta property="article:modified_time" content="2026-06-15T00:00:00+00:00" />
+<meta name="twitter:card" content="summary" />
+<meta name="twitter:title" content="GitHub actions usage" />
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"BlogPosting","dateModified":"2026-06-15T00:00:00+00:00","datePublished":"2026-06-15T00:00:00+00:00","description":"Powershell script","headline":"GitHub actions usage","mainEntityOfPage":{"@type":"WebPage","@id":"https://acnvrk.pages.dev/2026/06/15/github-actions-usage/"},"url":"https://acnvrk.pages.dev/2026/06/15/github-actions-usage/"}</script>
+<!-- End Jekyll SEO tag -->
+
+    <link rel="preconnect" href="https://fonts.gstatic.com">
+    <link rel="preload" href="https://fonts.googleapis.com/css?family=Open+Sans:400,700&display=swap" as="style" type="text/css" crossorigin>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#157878">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <link rel="stylesheet" href="/assets/css/style.css?v=">
+    <!-- start custom head snippets, customize with your own _includes/head-custom.html file -->
+
+<!-- Setup Google Analytics -->
+
+
+
+<!-- You can set your favicon here -->
+<!-- link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" -->
+
+<!-- end custom head snippets -->
+
+  </head>
+  <body>
+    <a id="skip-to-content" href="#content">Skip to the content.</a>
+
+    <header class="page-header" role="banner">
+      <h1 class="project-name">GitHub actions usage</h1>
+      <h2 class="project-tagline">Random brain dump notes</h2>
+      
+      
+    </header>
+
+    <main id="content" class="main-content" role="main">
+      <h2 id="powershell-script">Powershell script</h2>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>#Requires -Version 5.1
+&lt;#
+.SYNOPSIS
+    Reports GitHub Actions usage (minutes and cost) consumed within a given period.
+
+.DESCRIPTION
+    Uses the GitHub CLI (`gh api`) to call the enhanced billing platform's
+    "usage report" endpoint:
+
+        /organizations/{org}/settings/billing/usage
+        /users/{username}/settings/billing/usage
+        /enterprises/{enterprise}/settings/billing/usage
+
+    That endpoint only filters by year / month / day, so this script queries every
+    month spanned by -StartDate..-EndDate, then filters the returned line items by
+    their per-day `date` field to the exact range and sums them up. The breakdown
+    is reported per repository and SKU (the usage endpoint exposes `repositoryName`
+    and `sku` per line item, but no workflow/action name).
+
+    Authentication is handled by `gh` (run `gh auth login` first). The calling user
+    must be an org/enterprise admin or billing manager. Only the last 24 months of
+    data are available, and the endpoint requires an account on the enhanced billing
+    platform. Note: the billing usage endpoints do NOT work with fine-grained PATs.
+
+.PARAMETER Org
+    Organization login to report on.
+
+.PARAMETER User
+    User login to report on.
+
+.PARAMETER Enterprise
+    Enterprise slug to report on.
+
+.PARAMETER StartDate
+    Inclusive start of the period (any parseable date, e.g. 2026-05-01).
+
+.PARAMETER EndDate
+    Inclusive end of the period (e.g. 2026-05-31).
+
+.PARAMETER Product
+    Product to report on. Defaults to 'Actions'. Use '*' to include all products.
+
+.PARAMETER CostCenterId
+    (Enterprise only) Restrict to a single cost center.
+
+.EXAMPLE
+    .\Get-GitHubActionsUsage.ps1 -Org my-org -StartDate 2026-05-01 -EndDate 2026-05-31
+
+.EXAMPLE
+    .\Get-GitHubActionsUsage.ps1 -Enterprise my-ent -StartDate 2026-04-15 -EndDate 2026-06-14 -CostCenterId 42
+#&gt;
+[CmdletBinding(DefaultParameterSetName = 'Org')]
+param(
+    [Parameter(Mandatory, ParameterSetName = 'Org')]
+    [string]$Org,
+
+    [Parameter(Mandatory, ParameterSetName = 'User')]
+    [string]$User,
+
+    [Parameter(Mandatory, ParameterSetName = 'Enterprise')]
+    [string]$Enterprise,
+
+    [Parameter(Mandatory)]
+    [datetime]$StartDate,
+
+    [Parameter(Mandatory)]
+    [datetime]$EndDate,
+
+    [string]$Product = 'Actions',
+
+    [Parameter(ParameterSetName = 'Enterprise')]
+    [int]$CostCenterId
+)
+
+$ErrorActionPreference = 'Stop'
+
+# --- Preflight: gh present and authenticated ------------------------------------
+if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
+    throw "GitHub CLI ('gh') was not found on PATH. Install it from https://cli.github.com/ and run 'gh auth login'."
+}
+gh auth status 2&gt;$null | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    throw "You are not logged in to GitHub CLI. Run 'gh auth login' (the account must have billing/admin access)."
+}
+
+if ($EndDate -lt $StartDate) {
+    throw "-EndDate ($($EndDate.ToString('yyyy-MM-dd'))) is earlier than -StartDate ($($StartDate.ToString('yyyy-MM-dd')))."
+}
+
+# --- Resolve the base API path for the chosen account type ----------------------
+switch ($PSCmdlet.ParameterSetName) {
+    'Org'        { $basePath = "/organizations/$Org";   $scopeLabel = "organization '$Org'" }
+    'User'       { $basePath = "/users/$User";          $scopeLabel = "user '$User'" }
+    'Enterprise' { $basePath = "/enterprises/$Enterprise"; $scopeLabel = "enterprise '$Enterprise'" }
+}
+
+# --- Build the list of (year, month) pairs the period spans ---------------------
+$cursor = Get-Date -Year $StartDate.Year  -Month $StartDate.Month -Day 1
+$last   = Get-Date -Year $EndDate.Year    -Month $EndDate.Month   -Day 1
+$months = while ($cursor -le $last) { $cursor; $cursor = $cursor.AddMonths(1) }
+
+# --- Fetch usage for each month, collect line items -----------------------------
+$allItems = New-Object System.Collections.Generic.List[object]
+
+foreach ($m in $months) {
+    $endpoint = "$basePath/settings/billing/usage?year=$($m.Year)&amp;month=$($m.Month)"
+    if ($PSCmdlet.ParameterSetName -eq 'Enterprise' -and $PSBoundParameters.ContainsKey('CostCenterId')) {
+        $endpoint += "&amp;cost_center_id=$CostCenterId"
+    }
+
+    Write-Verbose "GET $endpoint"
+    $raw = gh api -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" $endpoint 2&gt;&amp;1
+    if ($LASTEXITCODE -ne 0) {
+        throw "gh api call failed for $($m.ToString('yyyy-MM')): $raw"
+    }
+
+    $data = $raw | ConvertFrom-Json
+    if ($data.usageItems) { $data.usageItems | ForEach-Object { $allItems.Add($_) } }
+}
+
+# --- Filter to the exact date window and chosen product -------------------------
+$start = $StartDate.Date
+$end   = $EndDate.Date
+$filtered = $allItems | Where-Object {
+    $d = [datetime]::Parse($_.date)
+    ($d.Date -ge $start) -and ($d.Date -le $end) -and (($Product -eq '*') -or ($_.product -eq $Product))
+}
+
+if (-not $filtered) {
+    Write-Host "No $Product usage found for $scopeLabel between $($start.ToString('yyyy-MM-dd')) and $($end.ToString('yyyy-MM-dd'))." -ForegroundColor Yellow
+    return
+}
+
+# --- Aggregate by repository + SKU ----------------------------------------------
+$breakdown = $filtered | Group-Object repositoryName, sku | ForEach-Object {
+    $first = $_.Group | Select-Object -First 1
+    [pscustomobject]@{
+        Repository = if ($first.repositoryName) { $first.repositoryName } else { '(none)' }
+        SKU        = $first.sku
+        UnitType   = $first.unitType
+        Quantity   = [math]::Round((($_.Group | Measure-Object quantity      -Sum).Sum), 2)
+        Gross      = [math]::Round((($_.Group | Measure-Object grossAmount   -Sum).Sum), 2)
+        Discount   = [math]::Round((($_.Group | Measure-Object discountAmount -Sum).Sum), 2)
+        Net        = [math]::Round((($_.Group | Measure-Object netAmount     -Sum).Sum), 2)
+    }
+} | Sort-Object -Property Net -Descending
+
+# --- Report ---------------------------------------------------------------------
+Write-Host ""
+Write-Host "GitHub $Product usage for $scopeLabel" -ForegroundColor Cyan
+Write-Host "Period: $($start.ToString('yyyy-MM-dd')) to $($end.ToString('yyyy-MM-dd'))" -ForegroundColor Cyan
+Write-Host ""
+
+$breakdown | Format-Table -AutoSize
+
+$totalMinutes = ($filtered | Where-Object { $_.unitType -eq 'minutes' } | Measure-Object quantity -Sum).Sum
+$totalGross   = ($filtered | Measure-Object grossAmount   -Sum).Sum
+$totalDiscount= ($filtered | Measure-Object discountAmount -Sum).Sum
+$totalNet     = ($filtered | Measure-Object netAmount     -Sum).Sum
+
+Write-Host ("Total minutes : {0:N2}" -f ($totalMinutes | ForEach-Object { if ($_) { $_ } else { 0 } }))
+Write-Host ("Gross cost    : {0:N2}" -f $totalGross)
+Write-Host ("Discounts     : {0:N2}" -f $totalDiscount)
+Write-Host ("Net cost      : {0:N2}" -f $totalNet) -ForegroundColor Green
+Write-Host "(Amounts are in the account's billing currency, typically USD.)" -ForegroundColor DarkGray
+
+# Emit the breakdown to the pipeline so it can be exported / processed further.
+$breakdown
+</code></pre></div></div>
+
+
+      <footer class="site-footer">
+        
+        <span class="site-footer-credits">This page was generated by <a href="https://pages.github.com">GitHub Pages</a>.</span>
+      </footer>
+    </main>
+  </body>
+</html>

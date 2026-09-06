@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en-US">
+  <head>
+    <meta charset="UTF-8">
+
+<!-- Begin Jekyll SEO tag v2.9.0 -->
+<title>Wake-on-lan with Mac Address | Notes by Kishore</title>
+<meta name="generator" content="Jekyll v4.4.1" />
+<meta property="og:title" content="Wake-on-lan with Mac Address" />
+<meta property="og:locale" content="en_US" />
+<meta name="description" content="Send a wake-on-lan command" />
+<meta name="twitter:description" property="og:description" content="Send a wake-on-lan command" />
+<link rel="canonical" href="https://acnvrk.pages.dev/2023/06/23/wake-on-lan/" />
+<meta property="og:url" content="https://acnvrk.pages.dev/2023/06/23/wake-on-lan/" />
+<meta property="og:site_name" content="Notes by Kishore" />
+<meta property="og:type" content="article" />
+<meta property="article:published_time" content="2023-06-23T00:00:00+00:00" />
+<meta property="article:modified_time" content="2023-06-23T00:00:00+00:00" />
+<meta name="twitter:card" content="summary" />
+<meta name="twitter:title" content="Wake-on-lan with Mac Address" />
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"BlogPosting","dateModified":"2023-06-23T00:00:00+00:00","datePublished":"2023-06-23T00:00:00+00:00","description":"Send a wake-on-lan command","headline":"Wake-on-lan with Mac Address","mainEntityOfPage":{"@type":"WebPage","@id":"https://acnvrk.pages.dev/2023/06/23/wake-on-lan/"},"url":"https://acnvrk.pages.dev/2023/06/23/wake-on-lan/"}</script>
+<!-- End Jekyll SEO tag -->
+
+    <link rel="preconnect" href="https://fonts.gstatic.com">
+    <link rel="preload" href="https://fonts.googleapis.com/css?family=Open+Sans:400,700&display=swap" as="style" type="text/css" crossorigin>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#157878">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <link rel="stylesheet" href="/assets/css/style.css?v=">
+    <!-- start custom head snippets, customize with your own _includes/head-custom.html file -->
+
+<!-- Setup Google Analytics -->
+
+
+
+<!-- You can set your favicon here -->
+<!-- link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" -->
+
+<!-- end custom head snippets -->
+
+  </head>
+  <body>
+    <a id="skip-to-content" href="#content">Skip to the content.</a>
+
+    <header class="page-header" role="banner">
+      <h1 class="project-name">Wake-on-lan with Mac Address</h1>
+      <h2 class="project-tagline">Random brain dump notes</h2>
+      
+      
+    </header>
+
+    <main id="content" class="main-content" role="main">
+      <h2 id="send-a-wake-on-lan-command">Send a wake-on-lan command</h2>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>&lt;#  
+.SYNOPSIS  
+    Powershell script to send wake command to computer on the network. 
+	Needs MAC address to send the command
+  
+.PARAMETER macAddress 
+    Address of the server: eg: 1A:2B:3C:4D:5E:6F
+      
+.EXAMPLE  
+    WakeOnLan -macAddress "1A:2B:3C:4D:5E:6F"
+.NOTES
+   # References: 
+   #    https://www.pdq.com/blog/wake-on-lan-wol-magic-packet-powershell/
+   #    https://stackoverflow.com/a/72853503/18169
+#&gt; 
+
+param
+(
+	[parameter(Mandatory=$true)] 
+	[string]$macAddress
+)
+
+ 
+function sendWakeCommandWithUdpClient
+{
+	[byte[]]$MacByteArray = $macAddress -split "[:-]" | ForEach-Object { [Byte] "0x$_"}
+	[Byte[]] $MagicPacket = (,0xFF * 6) + ($MacByteArray  * 16)
+
+	$UdpClient = New-Object System.Net.Sockets.UdpClient
+	$UdpClient.Connect(([System.Net.IPAddress]::Broadcast),7)
+	#returns the number of bytes sent
+	$UdpClient.Send($MagicPacket,$MagicPacket.Length) | Out-Null
+	$UdpClient.Close()
+}
+
+function sendWakeCommandWithEndPoint
+{
+	
+	$mac = $macAddress;
+	[System.Net.NetworkInformation.NetworkInterface]::GetAllNetworkInterfaces() | Where-Object { $_.NetworkInterfaceType -ne [System.Net.NetworkInformation.NetworkInterfaceType]::Loopback -and $_.OperationalStatus -eq [System.Net.NetworkInformation.OperationalStatus]::Up } | ForEach-Object {
+		$networkInterface = $_
+		$localIpAddress = ($networkInterface.GetIPProperties().UnicastAddresses | Where-Object { $_.Address.AddressFamily -eq [System.Net.Sockets.AddressFamily]::InterNetwork })[0].Address
+		$targetPhysicalAddress = [System.Net.NetworkInformation.PhysicalAddress]::Parse(($mac.ToUpper() -replace '[^0-9A-F]',''))
+		$targetPhysicalAddressBytes = $targetPhysicalAddress.GetAddressBytes()
+		$packet = [byte[]](,0xFF * 102)
+		6..101 | Foreach-Object { $packet[$_] = $targetPhysicalAddressBytes[($_ % 6)] }
+		$localEndpoint = [System.Net.IPEndPoint]::new($localIpAddress, 0)
+		$targetEndpoint = [System.Net.IPEndPoint]::new([System.Net.IPAddress]::Broadcast, 9)
+		$client = [System.Net.Sockets.UdpClient]::new($localEndpoint)
+		try { $client.Send($packet, $packet.Length, $targetEndpoint) | Out-Null } finally { $client.Dispose() }
+	}
+}
+# Method 1
+sendWakeCommandWithUdpClient
+# Method 2
+sendWakeCommandWithEndPoint
+
+</code></pre></div></div>
+
+
+      <footer class="site-footer">
+        
+        <span class="site-footer-credits">This page was generated by <a href="https://pages.github.com">GitHub Pages</a>.</span>
+      </footer>
+    </main>
+  </body>
+</html>

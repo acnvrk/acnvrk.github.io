@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en-US">
+  <head>
+    <meta charset="UTF-8">
+
+<!-- Begin Jekyll SEO tag v2.9.0 -->
+<title>Wiegnad data from ID and facility code | Notes by Kishore</title>
+<meta name="generator" content="Jekyll v4.4.1" />
+<meta property="og:title" content="Wiegnad data from ID and facility code" />
+<meta property="og:locale" content="en_US" />
+<meta name="description" content="Weigand data similar to H10301 format cards Script to generate wiegand data from a card number and facility code. Use to test weigand generation. This is tested with H10301 format cards used by IrisID IT100 biometric readers This is script for LinqPad" />
+<meta name="twitter:description" property="og:description" content="Weigand data similar to H10301 format cards Script to generate wiegand data from a card number and facility code. Use to test weigand generation. This is tested with H10301 format cards used by IrisID IT100 biometric readers This is script for LinqPad" />
+<link rel="canonical" href="https://acnvrk.pages.dev/2021/12/30/wiegand-from-id-facility-code/" />
+<meta property="og:url" content="https://acnvrk.pages.dev/2021/12/30/wiegand-from-id-facility-code/" />
+<meta property="og:site_name" content="Notes by Kishore" />
+<meta property="og:type" content="article" />
+<meta property="article:published_time" content="2021-12-30T00:00:00+00:00" />
+<meta property="article:modified_time" content="2021-12-30T00:00:00+00:00" />
+<meta name="twitter:card" content="summary" />
+<meta name="twitter:title" content="Wiegnad data from ID and facility code" />
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"BlogPosting","dateModified":"2021-12-30T00:00:00+00:00","datePublished":"2021-12-30T00:00:00+00:00","description":"Weigand data similar to H10301 format cards Script to generate wiegand data from a card number and facility code. Use to test weigand generation. This is tested with H10301 format cards used by IrisID IT100 biometric readers This is script for LinqPad","headline":"Wiegnad data from ID and facility code","mainEntityOfPage":{"@type":"WebPage","@id":"https://acnvrk.pages.dev/2021/12/30/wiegand-from-id-facility-code/"},"url":"https://acnvrk.pages.dev/2021/12/30/wiegand-from-id-facility-code/"}</script>
+<!-- End Jekyll SEO tag -->
+
+    <link rel="preconnect" href="https://fonts.gstatic.com">
+    <link rel="preload" href="https://fonts.googleapis.com/css?family=Open+Sans:400,700&display=swap" as="style" type="text/css" crossorigin>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#157878">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <link rel="stylesheet" href="/assets/css/style.css?v=">
+    <!-- start custom head snippets, customize with your own _includes/head-custom.html file -->
+
+<!-- Setup Google Analytics -->
+
+
+
+<!-- You can set your favicon here -->
+<!-- link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" -->
+
+<!-- end custom head snippets -->
+
+  </head>
+  <body>
+    <a id="skip-to-content" href="#content">Skip to the content.</a>
+
+    <header class="page-header" role="banner">
+      <h1 class="project-name">Wiegnad data from ID and facility code</h1>
+      <h2 class="project-tagline">Random brain dump notes</h2>
+      
+      
+    </header>
+
+    <main id="content" class="main-content" role="main">
+      <h2 id="weigand-data-similar-to-h10301-format-cards">Weigand data similar to H10301 format cards</h2>
+<ul>
+  <li>Script to generate wiegand data from a card number and facility code. Use to test weigand generation. This is tested with H10301 format cards used by <a href="https://irisid.com/products/hardware-products/irisaccess-it100/">IrisID IT100 biometric readers</a></li>
+  <li>This is script for LinqPad</li>
+</ul>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>&lt;Query Kind="Program"&gt;
+  &lt;Namespace&gt;System&lt;/Namespace&gt;
+  &lt;Namespace&gt;System.Collections.Generic&lt;/Namespace&gt;
+  &lt;Namespace&gt;System.IO&lt;/Namespace&gt;
+  &lt;Namespace&gt;System.Linq&lt;/Namespace&gt;
+  &lt;Namespace&gt;System.Reflection&lt;/Namespace&gt;
+&lt;/Query&gt;
+
+/*
+  Use linq-pad to run the program [https://www.linqpad.net/Download.aspx]
+  Script to generate wiegand data from a card number and facility code
+  This code generates wiegand data similar to Iris ID card reader.
+  
+  Use to test weigand generation.
+    - This is tested with H10301 format cards
+	
+  References:
+  1. https://stackoverflow.com/a/5612479/18169
+  2. https://github.com/jessety/wiegand-encoder/blob/main/src
+  3. https://stackoverflow.com/a/2955001/18169
+  
+  Wiegand protocol is a data-format in which access readers and communicate with each other over a Wiegand interface. 
+  There are many different variations of the data format used in the data transmission process.
+  The most common is the 26 bit Wiegand format that has 16 bits of ID code, 8 bits of facility code, one bit of leading parity, and a trailing parity bit.
+  It is an open format, widely used and accepted by all the access control systems in the world.
+  
+  PFFFFFFFFNNNNNNNNNNNNNNNNP
+  P: Parity bits
+  F: Facility code
+  N: Card ID
+*/
+void Main()
+{
+	var cardNum = 5561;
+	var facility = 101;
+	
+	var binary = Encode(cardNum, facility);
+	var hex = BinaryStringToHexString(binary);
+	
+	cardNum.Dump();
+	hex.Dump();
+	binary.Dump();
+}
+
+//https://stackoverflow.com/a/5612479/18169
+static string BinaryStringToHexString(string binary)
+{
+    if (string.IsNullOrEmpty(binary))
+        return binary;
+
+    var result = new StringBuilder(binary.Length / 8 + 1);
+
+    int mod4Len = binary.Length % 8;
+    if (mod4Len != 0)
+    {
+        // pad to length multiple of 8
+        binary = binary.PadRight(((binary.Length / 8) + 1) * 8, '0');
+    }
+
+    for (int i = 0; i &lt; binary.Length; i += 8)
+    {
+        string eightBits = binary.Substring(i, 8);
+        result.AppendFormat("{0:X2}", Convert.ToByte(eightBits, 2));
+    }
+
+    return result.ToString();
+}
+
+//https://github.com/jessety/wiegand-encoder/blob/main/src/encode.ts
+string Encode(int cardNumber, int facilityCode, int cardNumberLength = 16, int facilityCodeLength = 8) {
+
+  if (cardNumber &lt; 0) {
+    throw new Exception($"Card number must be a positive integer. Received {cardNumber}");
+  }
+
+  if (facilityCode &lt; 0) {
+    throw new Exception($"Facility code must be a positive integer. Received {facilityCode}");
+  }
+  
+  // Create binary representations of the card number and facility code
+  // Pad the card number to 16 bits, and the facility code to 8 bits
+  //https://stackoverflow.com/a/2955001/18169
+  var cardNumberBinary = Convert.ToString(cardNumber, 2).PadLeft(cardNumberLength, '0');
+  var facilityCodeBinary = Convert.ToString(facilityCode, 2).PadLeft(facilityCodeLength, '0');
+
+  if (cardNumberBinary.Length &gt; cardNumberLength) {
+    throw new Exception($"Card number {cardNumber} is too large to encode in ${cardNumberLength + facilityCodeLength + 2}-bit format.");
+  }
+
+  if (facilityCodeBinary.Length &gt; facilityCodeLength) {
+
+    throw new Exception($"Facility code {facilityCode} is too large to encode in ${cardNumberLength + facilityCodeLength + 2}-bit format.");
+  }
+
+  // Concatenate the binary representations of the facility code and the card number to create the message
+  var credential = facilityCodeBinary + cardNumberBinary;
+
+  // Calculate parity for each half of the message string
+  var (left, right) = Calculate(credential);
+
+  // Concatenate the left parity bit, the facility code, the card number, and the right parity bit
+  var message = left + credential + right;
+  return message;
+}
+
+//https://github.com/jessety/wiegand-encoder/blob/main/src/parity.ts
+(byte, byte) Calculate(string contents){
+
+  if (contents.Length &lt; 2) {
+    throw new Exception("Invalid data");
+  }
+
+  if (contents.Length % 2 == 1) {
+    throw new Exception("Cannot calculate parity for message with an odd number of bits.");
+  }
+
+  // Split the string in half
+  var leftHalf = contents.Substring(0, contents.Length / 2);
+  var rightHalf = contents.Substring(contents.Length / 2);
+
+  // Calculate how many digits are '1' in each half of the string
+  var leftBitCount = leftHalf.Where(bit =&gt; bit == '1').Count();
+  var rightBitCount = rightHalf.Where(bit =&gt; bit == '1').Count();
+
+  // If the left digit count is odd, set the left parity count to '1'. Otherwise, set it to '0'.
+  byte left = 0;
+
+  if (leftBitCount % 2 == 1) {
+    left = 1;
+  }
+
+  // If the right digit count is odd, set the right parity to '0'. Otherwise, set it to '1'.
+  byte right = 1;
+
+  if (rightBitCount % 2 == 1) {
+    right = 0;
+  }
+
+  return (left, right);
+}
+</code></pre></div></div>
+
+
+      <footer class="site-footer">
+        
+        <span class="site-footer-credits">This page was generated by <a href="https://pages.github.com">GitHub Pages</a>.</span>
+      </footer>
+    </main>
+  </body>
+</html>

@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en-US">
+  <head>
+    <meta charset="UTF-8">
+
+<!-- Begin Jekyll SEO tag v2.9.0 -->
+<title>Rename files to match git names | Notes by Kishore</title>
+<meta name="generator" content="Jekyll v4.4.1" />
+<meta property="og:title" content="Rename files to match git names" />
+<meta property="og:locale" content="en_US" />
+<meta name="description" content="This powershell script renames Git file names to match the actual casing on disk." />
+<meta name="twitter:description" property="og:description" content="This powershell script renames Git file names to match the actual casing on disk." />
+<link rel="canonical" href="https://acnvrk.pages.dev/2025/03/27/rename-files-match-git-names/" />
+<meta property="og:url" content="https://acnvrk.pages.dev/2025/03/27/rename-files-match-git-names/" />
+<meta property="og:site_name" content="Notes by Kishore" />
+<meta property="og:type" content="article" />
+<meta property="article:published_time" content="2025-03-27T00:00:00+00:00" />
+<meta property="article:modified_time" content="2025-03-27T00:00:00+00:00" />
+<meta name="twitter:card" content="summary" />
+<meta name="twitter:title" content="Rename files to match git names" />
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"BlogPosting","dateModified":"2025-03-27T00:00:00+00:00","datePublished":"2025-03-27T00:00:00+00:00","description":"This powershell script renames Git file names to match the actual casing on disk.","headline":"Rename files to match git names","mainEntityOfPage":{"@type":"WebPage","@id":"https://acnvrk.pages.dev/2025/03/27/rename-files-match-git-names/"},"url":"https://acnvrk.pages.dev/2025/03/27/rename-files-match-git-names/"}</script>
+<!-- End Jekyll SEO tag -->
+
+    <link rel="preconnect" href="https://fonts.gstatic.com">
+    <link rel="preload" href="https://fonts.googleapis.com/css?family=Open+Sans:400,700&display=swap" as="style" type="text/css" crossorigin>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#157878">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <link rel="stylesheet" href="/assets/css/style.css?v=">
+    <!-- start custom head snippets, customize with your own _includes/head-custom.html file -->
+
+<!-- Setup Google Analytics -->
+
+
+
+<!-- You can set your favicon here -->
+<!-- link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" -->
+
+<!-- end custom head snippets -->
+
+  </head>
+  <body>
+    <a id="skip-to-content" href="#content">Skip to the content.</a>
+
+    <header class="page-header" role="banner">
+      <h1 class="project-name">Rename files to match git names</h1>
+      <h2 class="project-tagline">Random brain dump notes</h2>
+      
+      
+    </header>
+
+    <main id="content" class="main-content" role="main">
+      <h2 id="this-powershell-script-renames-git-file-names-to-match-the-actual-casing-on-disk">This powershell script renames Git file names to match the actual casing on disk.</h2>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>&lt;#
+.SYNOPSIS
+This script renames Git file names to match the actual casing on disk.
+.NOTES
+Manual git commit is required after running this script.
+#&gt;
+
+[CmdletBinding(SupportsShouldProcess=$true)]
+param
+(
+    [Parameter(Mandatory=$true, Position=0)]
+    [string]$folderPath,
+
+    [Parameter()]
+    [switch]$ShowDetails
+)
+
+# Get all files from Git for the specified folder
+$gitFiles = git ls-files $folderPath
+
+if ($ShowDetails) 
+{
+    Write-Host "Git files:"
+    foreach ($file in $gitFiles) 
+    {
+        Write-Host $file
+    }
+}
+
+# Get actual files on disk for the specified folder
+$diskFiles = Get-ChildItem -Path $folderPath -Recurse -File | ForEach-Object { $_.FullName.Replace($PWD.Path + '\', '').Replace('\', '/') }
+
+if ($ShowDetails) 
+{
+    Write-Host "`nDisk files:"
+    foreach ($file in $diskFiles) 
+    {
+        Write-Host $file
+    }
+}
+
+# Compare and find case mismatches
+foreach ($gitFile in $gitFiles) 
+{
+    if ($ShowDetails) 
+    {
+        Write-Host "Checking: $gitFile"
+    }
+    $diskFile = $diskFiles | Where-Object { $_ -ieq $gitFile }
+    if ($diskFile -and ($diskFile -cne $gitFile)) 
+    {
+        Write-Host "Case mismatch found:"
+        Write-Host "Git:  $gitFile"
+        Write-Host "Disk: $diskFile"
+        
+        # Create temporary name
+        $tempName = $gitFile + ".temp"
+        
+        $operation = "Rename Git file from '$gitFile' to '$diskFile'"
+        if ($PSCmdlet.ShouldProcess($gitFile, $operation)) 
+        {
+            # Two-step rename to handle case sensitivity
+            git mv $gitFile $tempName
+            git mv $tempName $diskFile
+        }
+    }
+}
+</code></pre></div></div>
+
+
+      <footer class="site-footer">
+        
+        <span class="site-footer-credits">This page was generated by <a href="https://pages.github.com">GitHub Pages</a>.</span>
+      </footer>
+    </main>
+  </body>
+</html>

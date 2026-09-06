@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en-US">
+  <head>
+    <meta charset="UTF-8">
+
+<!-- Begin Jekyll SEO tag v2.9.0 -->
+<title>GitHub - Delete old artifacts | Notes by Kishore</title>
+<meta name="generator" content="Jekyll v4.4.1" />
+<meta property="og:title" content="GitHub - Delete old artifacts" />
+<meta property="og:locale" content="en_US" />
+<meta name="description" content="Deletes GitHub Actions artifacts using the gh CLI on Windows." />
+<meta name="twitter:description" property="og:description" content="Deletes GitHub Actions artifacts using the gh CLI on Windows." />
+<link rel="canonical" href="https://acnvrk.pages.dev/2026/05/26/github-delete-artifacts/" />
+<meta property="og:url" content="https://acnvrk.pages.dev/2026/05/26/github-delete-artifacts/" />
+<meta property="og:site_name" content="Notes by Kishore" />
+<meta property="og:type" content="article" />
+<meta property="article:published_time" content="2026-05-26T00:00:00+00:00" />
+<meta property="article:modified_time" content="2026-05-26T00:00:00+00:00" />
+<meta name="twitter:card" content="summary" />
+<meta name="twitter:title" content="GitHub - Delete old artifacts" />
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"BlogPosting","dateModified":"2026-05-26T00:00:00+00:00","datePublished":"2026-05-26T00:00:00+00:00","description":"Deletes GitHub Actions artifacts using the gh CLI on Windows.","headline":"GitHub - Delete old artifacts","mainEntityOfPage":{"@type":"WebPage","@id":"https://acnvrk.pages.dev/2026/05/26/github-delete-artifacts/"},"url":"https://acnvrk.pages.dev/2026/05/26/github-delete-artifacts/"}</script>
+<!-- End Jekyll SEO tag -->
+
+    <link rel="preconnect" href="https://fonts.gstatic.com">
+    <link rel="preload" href="https://fonts.googleapis.com/css?family=Open+Sans:400,700&display=swap" as="style" type="text/css" crossorigin>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#157878">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <link rel="stylesheet" href="/assets/css/style.css?v=">
+    <!-- start custom head snippets, customize with your own _includes/head-custom.html file -->
+
+<!-- Setup Google Analytics -->
+
+
+
+<!-- You can set your favicon here -->
+<!-- link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" -->
+
+<!-- end custom head snippets -->
+
+  </head>
+  <body>
+    <a id="skip-to-content" href="#content">Skip to the content.</a>
+
+    <header class="page-header" role="banner">
+      <h1 class="project-name">GitHub - Delete old artifacts</h1>
+      <h2 class="project-tagline">Random brain dump notes</h2>
+      
+      
+    </header>
+
+    <main id="content" class="main-content" role="main">
+      <h2 id="deletes-github-actions-artifacts-using-the-gh-cli-on-windows">Deletes GitHub Actions artifacts using the gh CLI on Windows.</h2>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>&lt;#
+.SYNOPSIS
+    Deletes GitHub Actions artifacts using the gh CLI on Windows.
+
+.DESCRIPTION
+    Requires gh CLI installed and authenticated (gh auth login).
+    Install gh: winget install --id GitHub.cli
+
+.PARAMETER Repo
+    Repository in OWNER/REPO format.
+
+.PARAMETER OlderThanDays
+    Only delete artifacts older than N days. 0 (default) deletes all.
+
+.PARAMETER DryRun
+    Preview without deleting.
+
+.EXAMPLE
+    .\Delete-Artifacts.ps1 -Repo "myorg/myrepo" -DryRun
+    .\Delete-Artifacts.ps1 -Repo "myorg/myrepo"
+    .\Delete-Artifacts.ps1 -Repo "myorg/myrepo" -OlderThanDays 7
+#&gt;
+
+param(
+    [Parameter(Mandatory = $true)]
+    [string]$Repo,
+
+    [int]$OlderThanDays = 0,
+
+    [switch]$DryRun
+)
+
+# Verify gh is installed and authenticated
+if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
+    Write-Error "gh CLI not found. Install with: winget install --id GitHub.cli"
+    exit 1
+}
+
+$authStatus = gh auth status 2&gt;&amp;1
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "gh CLI not authenticated. Run: gh auth login"
+    exit 1
+}
+
+Write-Host "Fetching artifacts from $Repo..." -ForegroundColor Cyan
+
+# Compute cutoff date if filtering by age
+$cutoff = if ($OlderThanDays -gt 0) {
+    (Get-Date).ToUniversalTime().AddDays(-$OlderThanDays)
+} else { $null }
+
+if ($cutoff) {
+    Write-Host "Will only delete artifacts created before: $($cutoff.ToString('o'))" -ForegroundColor Cyan
+}
+
+# Fetch all artifacts (gh handles pagination with --paginate)
+try {
+    $json = gh api --paginate "repos/$Repo/actions/artifacts" --jq '.artifacts[]' 2&gt;$null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "Failed to fetch artifacts from $Repo. Check repo name and permissions."
+        exit 1
+    }
+    $artifacts = $json | ConvertFrom-Json
+}
+catch {
+    Write-Error "Failed to parse artifacts: $_"
+    exit 1
+}
+
+if (-not $artifacts -or $artifacts.Count -eq 0) {
+    Write-Host "No artifacts found." -ForegroundColor Yellow
+    exit 0
+}
+
+Write-Host "Found $($artifacts.Count) artifact(s)." -ForegroundColor Cyan
+Write-Host ""
+
+$deleted = 0
+$skipped = 0
+$failed  = 0
+
+foreach ($artifact in $artifacts) {
+    $createdAt = [datetime]$artifact.created_at
+    $sizeMB    = [math]::Round($artifact.size_in_bytes / 1MB, 2)
+    $label     = "[$($artifact.id)] $($artifact.name) ($sizeMB MB, $($createdAt.ToString('yyyy-MM-dd')))"
+
+    if ($cutoff -and $createdAt -gt $cutoff) {
+        Write-Host "  SKIP         $label" -ForegroundColor DarkGray
+        $skipped++
+        continue
+    }
+
+    if ($DryRun) {
+        Write-Host "  WOULD DELETE $label" -ForegroundColor Yellow
+        $deleted++
+        continue
+    }
+
+    gh api -X DELETE "repos/$Repo/actions/artifacts/$($artifact.id)" --silent 2&gt;$null
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "  DELETED      $label" -ForegroundColor Green
+        $deleted++
+    }
+    else {
+        Write-Host "  FAILED       $label" -ForegroundColor Red
+        $failed++
+    }
+}
+
+Write-Host ""
+Write-Host "Summary:" -ForegroundColor Cyan
+Write-Host "  Deleted/Would delete: $deleted"
+Write-Host "  Skipped             : $skipped"
+Write-Host "  Failed              : $failed"
+</code></pre></div></div>
+
+
+      <footer class="site-footer">
+        
+        <span class="site-footer-credits">This page was generated by <a href="https://pages.github.com">GitHub Pages</a>.</span>
+      </footer>
+    </main>
+  </body>
+</html>
