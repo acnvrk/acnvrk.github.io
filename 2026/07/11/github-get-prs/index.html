@@ -1,0 +1,738 @@
+<!DOCTYPE html>
+<html lang="en-US">
+  <head>
+    <meta charset="UTF-8">
+
+<!-- Begin Jekyll SEO tag v2.9.0 -->
+<title>GitHub PRs by author | Notes by Kishore</title>
+<meta name="generator" content="Jekyll v4.4.1" />
+<meta property="og:title" content="GitHub PRs by author" />
+<meta property="og:locale" content="en_US" />
+<meta name="description" content="Powershell script - Report pull-request activity across one or more repos in a GitHub org over a date range" />
+<meta name="twitter:description" property="og:description" content="Powershell script - Report pull-request activity across one or more repos in a GitHub org over a date range" />
+<link rel="canonical" href="https://acnvrk.pages.dev/2026/07/11/github-get-prs/" />
+<meta property="og:url" content="https://acnvrk.pages.dev/2026/07/11/github-get-prs/" />
+<meta property="og:site_name" content="Notes by Kishore" />
+<meta property="og:type" content="article" />
+<meta property="article:published_time" content="2026-07-11T00:00:00+00:00" />
+<meta property="article:modified_time" content="2026-07-11T00:00:00+00:00" />
+<meta name="twitter:card" content="summary" />
+<meta name="twitter:title" content="GitHub PRs by author" />
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"BlogPosting","dateModified":"2026-07-11T00:00:00+00:00","datePublished":"2026-07-11T00:00:00+00:00","description":"Powershell script - Report pull-request activity across one or more repos in a GitHub org over a date range","headline":"GitHub PRs by author","mainEntityOfPage":{"@type":"WebPage","@id":"https://acnvrk.pages.dev/2026/07/11/github-get-prs/"},"url":"https://acnvrk.pages.dev/2026/07/11/github-get-prs/"}</script>
+<!-- End Jekyll SEO tag -->
+
+    <link rel="preconnect" href="https://fonts.gstatic.com">
+    <link rel="preload" href="https://fonts.googleapis.com/css?family=Open+Sans:400,700&display=swap" as="style" type="text/css" crossorigin>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#157878">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <link rel="stylesheet" href="/assets/css/style.css?v=">
+    <!-- start custom head snippets, customize with your own _includes/head-custom.html file -->
+
+<!-- Setup Google Analytics -->
+
+
+
+<!-- You can set your favicon here -->
+<!-- link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" -->
+
+<!-- end custom head snippets -->
+
+  </head>
+  <body>
+    <a id="skip-to-content" href="#content">Skip to the content.</a>
+
+    <header class="page-header" role="banner">
+      <h1 class="project-name">GitHub PRs by author</h1>
+      <h2 class="project-tagline">Random brain dump notes</h2>
+      
+      
+    </header>
+
+    <main id="content" class="main-content" role="main">
+      <h2 id="powershell-script---report-pull-request-activity-across-one-or-more-repos-in-a-github-org-over-a-date-range">Powershell script - Report pull-request activity across one or more repos in a GitHub org over a date range</h2>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>&lt;#
+.SYNOPSIS
+    Reports pull-request activity across one or more repos in a GitHub org over a date range.
+
+.DESCRIPTION
+    Uses the GitHub CLI (gh) to report, aggregated across all given repos.
+    Draft PRs are excluded from every count.
+      1. Total PRs opened within the date range (any status).
+      2. Total PRs closed within the date range (includes merged PRs).
+      3. Total PRs currently open.
+    Plus a per-repo summary and a per-developer summary, with a totals row:
+      - PRs-Open:           PRs the developer created (no date filter) that are
+                            currently open (not merged and not closed).
+      - PRs-Opened-InRange: PRs the developer created within the date range (any status).
+
+    Requires the GitHub CLI to be installed and authenticated (gh auth login).
+
+.PARAMETER Org
+    GitHub organization (or user) that owns the repos, e.g. &lt;orgName&gt;.
+
+.PARAMETER Repos
+    One or more repository names WITHOUT the org prefix; the script prepends -Org.
+    e.g. -Repos repo1, repo2, repo3
+
+.PARAMETER StartDate
+    Start of the range (inclusive). Accepts a date (2024-01-01) or a date+time
+    (2024-01-01 09:30). When a time is given it is sent to GitHub with your local
+    timezone offset; a date alone covers the whole day.
+
+.PARAMETER EndDate
+    End of the range (inclusive), e.g. 2024-01-31 or "2024-01-31 17:00".
+
+.PARAMETER Limit
+    Max results to pull per query (gh caps this at 1000). Default 1000.
+    Note: the limit applies to the combined multi-repo result set.
+
+.PARAMETER TeamsWebhookUrl
+    Optional. A Power Automate "When a Teams webhook request is received" URL.
+    When supplied, the report is posted to that Teams channel as an Adaptive Card.
+    (The legacy Office 365 "Incoming Webhook" connector was retired in May 2026;
+    create the URL via the Workflows app in Teams.)
+
+.EXAMPLE
+    .\Get-PrStats.ps1 -Org &lt;orgName&gt; `
+        -Repos repo1, repo2, repo3 `
+        -StartDate 2026-06-09T19:00:00 -EndDate 2026-06-15T16:51:00
+#&gt;
+
+[CmdletBinding()]
+param(
+    [Parameter(Mandatory)] [string]   $Org,
+    [Parameter(Mandatory)] [string[]] $Repos,
+    [Parameter(Mandatory)] [datetime] $StartDate,
+    [Parameter(Mandatory)] [datetime] $EndDate,
+    [int]    $Limit = 1000,
+    [string] $TeamsWebhookUrl
+)
+
+$ErrorActionPreference = 'Stop'
+
+# --- Preconditions ---------------------------------------------------------
+if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
+    throw "GitHub CLI (gh) was not found on PATH. Install it from https://cli.github.com/"
+}
+
+gh auth status 2&gt;$null | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    throw "gh is not authenticated. Run 'gh auth login' first."
+}
+
+if ($EndDate -lt $StartDate) {
+    throw "EndDate ($($EndDate.ToString('yyyy-MM-dd'))) is before StartDate ($($StartDate.ToString('yyyy-MM-dd')))."
+}
+
+# --- Build org/repo identifiers and the repeated --repo flags --------------
+$fullRepos = $Repos | ForEach-Object { '{0}/{1}' -f $Org, $_ }
+$repoArgs  = @()
+foreach ($r in $fullRepos) { $repoArgs += @('--repo', $r) }
+
+# Format a boundary for a GitHub search date qualifier.
+# Date only (midnight) -&gt; "yyyy-MM-dd", which GitHub treats as the whole day.
+# Date + time          -&gt; ISO 8601 with local offset, for a precise comparison.
+function Format-SearchDate {
+    param([datetime] $D)
+    if ($D.TimeOfDay.TotalSeconds -eq 0) {
+        return $D.ToString('yyyy-MM-dd')
+    }
+    return $D.ToString('yyyy-MM-ddTHH:mm:sszzz')
+}
+
+# GitHub search expects a start..end range.
+$startStr = Format-SearchDate $StartDate
+$endStr   = Format-SearchDate $EndDate
+$range    = "$startStr..$endStr"
+
+# Helper: run a gh search across all repos and return results as an array.
+function Invoke-PrSearch {
+    param([string[]] $GhArgs)
+    # --draft=false excludes draft PRs from every query.
+    $json = gh search prs @repoArgs --draft=false --limit $Limit @GhArgs 2&gt;$null
+    if ($LASTEXITCODE -ne 0) {
+        throw "gh search failed for args: $($GhArgs -join ' ')"
+    }
+    if ([string]::IsNullOrWhiteSpace($json)) { return @() }
+    return @($json | ConvertFrom-Json)
+}
+
+# Helper: author login from a result row.
+function Get-Login { param($row)
+    if ($row.author.login) { $row.author.login } else { '(unknown)' }
+}
+
+# Helper: repo identifier from a result row.
+function Get-RepoName { param($row)
+    if ($row.repository.nameWithOwner) { $row.repository.nameWithOwner }
+    elseif ($row.repository.name)      { $row.repository.name }
+    else                               { '(unknown)' }
+}
+
+# --- Queries ---------------------------------------------------------------
+$opened = Invoke-PrSearch @('--created', $range, '--json', 'number,author,createdAt,url,repository')   # created in range (any status)
+$closed = Invoke-PrSearch @('--closed',  $range, '--json', 'number,author,closedAt,state,url,repository')
+$open   = Invoke-PrSearch @('--state',  'open',  '--json', 'number,author,repository')                 # currently open (not merged, not closed)
+
+# --- Build the report as text ----------------------------------------------
+$report = [System.Collections.Generic.List[string]]::new()
+function Add-Line { param([string] $Text = '') $report.Add($Text) }
+
+Add-Line "PR report across $($fullRepos.Count) repo(s) in '$Org':"
+foreach ($r in $fullRepos) { Add-Line "  - $r" }
+Add-Line "Range: $startStr to $endStr"
+Add-Line ("-" * 60)
+Add-Line ("Total PRs opened in range : {0}" -f $opened.Count)
+Add-Line ("Total PRs closed in range : {0}" -f $closed.Count)
+Add-Line ("Total PRs currently open  : {0}" -f $open.Count)
+Add-Line ""
+
+# Per-repo summary
+$openedByRepo = $opened | Group-Object { Get-RepoName $_ } -AsHashTable -AsString
+$closedByRepo = $closed | Group-Object { Get-RepoName $_ } -AsHashTable -AsString
+$openByRepo   = $open   | Group-Object { Get-RepoName $_ } -AsHashTable -AsString
+
+function CountFor { param($table, $key) if ($table -and $table[$key]) { @($table[$key]).Count } else { 0 } }
+
+$perRepo = $fullRepos | ForEach-Object {
+    [pscustomobject]@{
+        Repo          = $_
+        OpenedInRange = CountFor $openedByRepo $_
+        ClosedInRange = CountFor $closedByRepo $_
+        CurrentlyOpen = CountFor $openByRepo   $_
+    }
+}
+Add-Line "Per-repo summary:"
+Add-Line (($perRepo | Format-Table -AutoSize | Out-String).TrimEnd())
+Add-Line ""
+
+# Per-developer summary
+$openByDev  = @{}
+foreach ($pr in $open)   { $l = Get-Login $pr; if ($openByDev.ContainsKey($l))  { $openByDev[$l]++ }  else { $openByDev[$l]  = 1 } }
+$rangeByDev = @{}
+foreach ($pr in $opened) { $l = Get-Login $pr; if ($rangeByDev.ContainsKey($l)) { $rangeByDev[$l]++ } else { $rangeByDev[$l] = 1 } }
+
+$devs = @($openByDev.Keys + $rangeByDev.Keys | Sort-Object -Unique)
+
+Add-Line "Per-developer summary:"
+if ($devs.Count -eq 0) {
+    Add-Line "  (none)"
+} else {
+    $rows = foreach ($d in $devs) {
+        [pscustomobject]@{
+            Developer            = $d
+            'PRs-Open'           = [int]$openByDev[$d]
+            'PRs-Opened-InRange' = [int]$rangeByDev[$d]
+        }
+    }
+    $rows = @($rows | Sort-Object 'PRs-Opened-InRange', 'PRs-Open' -Descending)
+    $totOpen    = [int](($rows | Measure-Object -Property 'PRs-Open'           -Sum).Sum)
+    $totInRange = [int](($rows | Measure-Object -Property 'PRs-Opened-InRange' -Sum).Sum)
+    $display  = @($rows)
+    $display += [pscustomobject]@{ Developer = 'TOTAL'; 'PRs-Open' = $totOpen; 'PRs-Opened-InRange' = $totInRange }
+    Add-Line (($display | Format-Table -AutoSize | Out-String).TrimEnd())
+}
+
+if ($Limit -le $open.Count -or $Limit -le $opened.Count -or $Limit -le $closed.Count) {
+    Add-Line ""
+    Add-Line "WARNING: a result set reached the -Limit ($Limit); numbers may be truncated."
+}
+
+$reportText = ($report -join "`n")
+
+# --- Emit to console -------------------------------------------------------
+Write-Output $reportText
+
+# --- Optionally post to Microsoft Teams (Power Automate Workflow webhook) ---
+if ($TeamsWebhookUrl) {
+    # A fenced code block keeps the tables monospaced/aligned in Teams.
+    $fence    = '```'
+    $bodyText = $fence + "`n" + $reportText + "`n" + $fence
+
+    $card = @{
+        type        = 'message'
+        attachments = @(
+            @{
+                contentType = 'application/vnd.microsoft.card.adaptive'
+                content     = @{
+                    '$schema' = 'http://adaptivecards.io/schemas/adaptive-card.json'
+                    type      = 'AdaptiveCard'
+                    version   = '1.4'
+                    body      = @(
+                        @{ type = 'TextBlock'; size = 'Large'; weight = 'Bolder';
+                           text = "GitHub PR Report - $Org ($startStr to $endStr)" },
+                        @{ type = 'TextBlock'; wrap = $true; fontType = 'Monospace'; text = $bodyText }
+                    )
+                }
+            }
+        )
+    }
+
+    $json = $card | ConvertTo-Json -Depth 12
+    if ([System.Text.Encoding]::UTF8.GetByteCount($json) -gt 28000) {
+        Write-Warning "Payload exceeds the ~28 KB Teams webhook limit and may be rejected. Narrow the range or repo list."
+    }
+
+    try {
+        Invoke-RestMethod -Uri $TeamsWebhookUrl -Method Post `
+            -ContentType 'application/json; charset=utf-8' -Body $json | Out-Null
+        Write-Host "Report posted to Teams." -ForegroundColor Green
+    } catch {
+        throw "Failed to post to Teams webhook: $($_.Exception.Message)"
+    }
+}
+</code></pre></div></div>
+
+<h2 id="powershell-script---using-github-cli-to-fetch-prs-you-closed-and-reviewed-today">Powershell script - using GitHub CLI to fetch PRs you closed and reviewed today</h2>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>param(
+    [string]$Format = "text",
+    [switch]$Clipboard,
+    [switch]$Preview,
+    [string]$SaveTo,
+    [switch]$Verbose,
+    [switch]$Debug,
+    [switch]$IncludeRecent,
+    [switch]$IncludePending
+)
+
+# Get current user and timezone info
+$currentUser = gh auth status 2&gt;&amp;1 | Select-String "Logged in to github.com account (.+?) \(" | ForEach-Object { $_.Matches[0].Groups[1].Value }
+if (-not $currentUser) {
+    Write-Error "Not logged in to GitHub. Run 'gh auth login' first."
+    exit 1
+}
+
+$localTimeZone = [System.TimeZoneInfo]::Local
+$utcTimeZone = [System.TimeZoneInfo]::Utc
+
+# Calculate today's date range in local time
+$localTodayStart = Get-Date -Hour 0 -Minute 0 -Second 0 -Millisecond 0
+$localTodayEnd = $localTodayStart.AddDays(1).AddMilliseconds(-1)
+
+# Convert to UTC for GitHub API
+$utcTodayStart = [System.TimeZoneInfo]::ConvertTimeToUtc($localTodayStart, $localTimeZone)
+$utcTodayEnd = [System.TimeZoneInfo]::ConvertTimeToUtc($localTodayEnd, $localTimeZone)
+
+# Format for GitHub search (date only, let GitHub handle the full day range)
+$utcSearchStart = $utcTodayStart.ToString('yyyy-MM-dd')
+$utcSearchEnd = $utcTodayEnd.ToString('yyyy-MM-dd')
+
+$todayLocalStr = $localTodayStart.ToString('yyyy-MM-dd')
+$dateLabel = "Today"
+
+if ($Debug) {
+    Write-Host "DEBUG - Local today: $($localTodayStart) to $($localTodayEnd)" -ForegroundColor Yellow
+    Write-Host "DEBUG - UTC search range: $utcSearchStart to $utcSearchEnd" -ForegroundColor Yellow
+}
+
+Write-Host "🔍 Fetching GitHub PR activity for $currentUser on $todayLocalStr (local time)..."
+
+if (-not $IncludeRecent) {
+    Write-Host "💡 Note: Very recent PRs (last ~10 minutes) may not appear due to search indexing delay. Use -IncludeRecent to check." -ForegroundColor Yellow
+}
+
+Write-Host "   → Searching all PRs with your activity..."
+
+# Single comprehensive search for all PR activity
+$searchCmd = "gh search prs --involves=`"$currentUser`" --updated=`"$utcSearchStart..$utcSearchEnd`" --json number,title,url,repository,createdAt,closedAt,updatedAt,author,state --limit 100"
+if ($Debug) { Write-Host "DEBUG - Command: $searchCmd" -ForegroundColor Yellow }
+
+$allActivityPRsJson = Invoke-Expression $searchCmd
+$allActivityPRs = if ($allActivityPRsJson) { $allActivityPRsJson | ConvertFrom-Json } else { @() }
+
+if ($Debug) { Write-Host "DEBUG - All activity PRs: $($allActivityPRs.Count)" -ForegroundColor Yellow }
+
+# Check recent events if requested
+$recentEventPRs = @()
+if ($IncludeRecent) {
+    Write-Host "   → Checking recent events for new PRs..."
+    $eventsCmd = "gh api `"users/$currentUser/events`" --jq `".[0:30]`""
+    if ($Debug) { Write-Host "DEBUG - Command: $eventsCmd" -ForegroundColor Yellow }
+    
+    $recentEvents = Invoke-Expression $eventsCmd | ConvertFrom-Json
+    $recentEventPRs = $recentEvents | Where-Object { 
+        $_.type -eq "PullRequestEvent" -and $_.payload.action -eq "opened" -and
+        $_.actor.login -eq $currentUser -and
+        ([DateTime]$_.created_at) -ge $utcTodayStart -and
+        ([DateTime]$_.created_at) -le $utcTodayEnd
+    } | ForEach-Object {
+        [PSCustomObject]@{
+            number = $_.payload.pull_request.number
+            title = $_.payload.pull_request.title
+            url = $_.payload.pull_request.html_url
+            repository = @{ nameWithOwner = $_.repo.name }
+            createdAt = $_.payload.pull_request.created_at
+            author = @{ login = $_.payload.pull_request.user.login }
+            state = $_.payload.pull_request.state
+        }
+    }
+}
+
+if ($Debug) { Write-Host "DEBUG - Recent event PRs: $($recentEventPRs.Count)" -ForegroundColor Yellow }
+
+# Combine and deduplicate PRs
+$allPRUrls = $allActivityPRs | ForEach-Object { $_.url }
+$uniqueRecentPRs = $recentEventPRs | Where-Object { $_.url -notin $allPRUrls }
+$allActivityPRs = $allActivityPRs + $uniqueRecentPRs
+
+# We'll detect review activity by checking each PR individually for your review actions
+$reviewedPRs = @()
+$pendingReviewPRs = @()
+
+if ($Debug) { 
+    Write-Host "DEBUG - Will check individual PRs for review activity" -ForegroundColor Yellow
+}
+
+# Categorize PRs based on your activity and creation date
+$createdPRs = @()
+$closedPRs = @()
+
+if ($Debug) { 
+    Write-Host "DEBUG - Processing $($allActivityPRs.Count) PRs for categorization..." -ForegroundColor Yellow
+}
+
+foreach ($pr in $allActivityPRs) {
+    $wasCreatedToday = $false
+    $wasClosedToday = $false
+    $wasReviewedToday = $false
+    
+    # Check if YOU created this PR today (author must be you)
+    if ($pr.createdAt -and $pr.author -and $pr.author.login -eq $currentUser) {
+        $createdDate = [DateTime]::Parse($pr.createdAt)
+        $localCreatedDate = [System.TimeZoneInfo]::ConvertTimeFromUtc($createdDate, $localTimeZone)
+        $wasCreatedToday = $localCreatedDate.Date -eq $localTodayStart.Date
+        
+        if ($Debug -and $wasCreatedToday) { 
+            Write-Host "DEBUG - Created today: #$($pr.number) $($pr.title) at $($localCreatedDate)" -ForegroundColor Green
+        }
+    }
+    
+    # Check if YOU closed/merged this PR today
+    if ($pr.closedAt -and $pr.closedAt -ne "0001-01-01T00:00:00Z" -and ($pr.state -eq "closed" -or $pr.state -eq "merged")) {
+        $closedDate = [DateTime]::Parse($pr.closedAt)
+        $localClosedDate = [System.TimeZoneInfo]::ConvertTimeFromUtc($closedDate, $localTimeZone)
+        $wasClosedTodayByTime = $localClosedDate.Date -eq $localTodayStart.Date
+        
+        # Only count if you actually closed it - need to check who merged it
+        $wasClosedToday = $false
+        if ($wasClosedTodayByTime) {
+            try {
+                $prDetails = gh pr view $pr.number --repo $pr.repository.nameWithOwner --json mergedBy,mergedAt,state 2&gt;$null | ConvertFrom-Json
+                $closedByYou = $prDetails.mergedBy -and $prDetails.mergedBy.login -eq $currentUser
+                $wasClosedToday = $closedByYou
+                
+                if ($Debug) {
+                    $whoClosedIt = if ($prDetails.mergedBy) { $prDetails.mergedBy.login } else { "not-merged" }
+                    Write-Host "DEBUG - PR #$($pr.number) closed today by: $whoClosedIt, You closed it: $closedByYou" -ForegroundColor Cyan
+                }
+            } catch {
+                # If we can't determine who closed it, don't count it
+                $wasClosedToday = $false
+                if ($Debug) { Write-Host "DEBUG - Could not determine who closed PR #$($pr.number)" -ForegroundColor Yellow }
+            }
+        }
+        
+        if ($Debug -and $wasClosedToday) { 
+            Write-Host "DEBUG - YOU closed today: #$($pr.number) $($pr.title) at $($localClosedDate)" -ForegroundColor Red
+        }
+    }
+    
+    # Check if YOU did review activity today (but not if you created or closed it)
+    if (-not $wasCreatedToday -and -not $wasClosedToday) {
+        try {
+            # Get your review activity on this PR
+            $reviewsJson = gh pr view $pr.number --repo $pr.repository.nameWithOwner --json reviews 2&gt;$null
+            if ($reviewsJson) {
+                $reviews = ($reviewsJson | ConvertFrom-Json).reviews
+                foreach ($review in $reviews) {
+                    if ($review.author.login -eq $currentUser) {
+                        $reviewDate = [DateTime]::Parse($review.submittedAt)
+                        $localReviewDate = [System.TimeZoneInfo]::ConvertTimeFromUtc($reviewDate, $localTimeZone)
+                        if ($localReviewDate.Date -eq $localTodayStart.Date) {
+                            $wasReviewedToday = $true
+                            if ($Debug) { 
+                                Write-Host "DEBUG - YOU reviewed today: #$($pr.number) $($pr.title) at $($localReviewDate) ($($review.state))" -ForegroundColor Blue
+                            }
+                            break
+                        }
+                    }
+                }
+            }
+            
+            # Also check for review comments today
+            if (-not $wasReviewedToday) {
+                $commentsJson = gh pr view $pr.number --repo $pr.repository.nameWithOwner --json reviewRequests,comments 2&gt;$null
+                if ($commentsJson) {
+                    $prData = $commentsJson | ConvertFrom-Json
+                    foreach ($comment in $prData.comments) {
+                        if ($comment.author.login -eq $currentUser) {
+                            $commentDate = [DateTime]::Parse($comment.createdAt)
+                            $localCommentDate = [System.TimeZoneInfo]::ConvertTimeFromUtc($commentDate, $localTimeZone)
+                            if ($localCommentDate.Date -eq $localTodayStart.Date) {
+                                $wasReviewedToday = $true
+                                if ($Debug) { 
+                                    Write-Host "DEBUG - YOU commented today: #$($pr.number) $($pr.title) at $($localCommentDate)" -ForegroundColor Blue
+                                }
+                                break
+                            }
+                        }
+                    }
+                }
+            }
+        } catch {
+            if ($Debug) { Write-Host "DEBUG - Could not check review activity for PR #$($pr.number)" -ForegroundColor Yellow }
+        }
+    }
+    
+    # Categorize based on what happened today
+    if ($wasCreatedToday) {
+        $createdPRs += $pr
+    } elseif ($wasClosedToday) {
+        $closedPRs += $pr
+    } elseif ($wasReviewedToday) {
+        $reviewedPRs += $pr
+    }
+    
+    if ($Debug) {
+        Write-Host "DEBUG - PR #$($pr.number): Created=$wasCreatedToday, Closed=$wasClosedToday, Reviewed=$wasReviewedToday, Author=$($pr.author.login)" -ForegroundColor Gray
+    }
+}
+
+# Search for PRs awaiting your review if requested
+if ($IncludePending) {
+    Write-Host "   → Searching PRs awaiting your review..."
+    
+    try {
+        $pendingCmd = "gh search prs --state=open --review-requested=`"$currentUser`" --json number,title,url,repository,createdAt,updatedAt,author,isDraft --limit 50"
+        if ($Debug) { Write-Host "DEBUG - Command: $pendingCmd" -ForegroundColor Yellow }
+        
+        $pendingPRsJson = Invoke-Expression $pendingCmd
+        $pendingReviewPRs = if ($pendingPRsJson) { $pendingPRsJson | ConvertFrom-Json } else { @() }
+        
+        # Filter out draft PRs unless in verbose mode
+        if (-not $Verbose) {
+            $pendingReviewPRs = $pendingReviewPRs | Where-Object { -not $_.isDraft }
+        }
+        
+        if ($Debug) { 
+            Write-Host "DEBUG - Found $($pendingReviewPRs.Count) PRs awaiting your review" -ForegroundColor Yellow
+            foreach ($pendingPR in $pendingReviewPRs) {
+                $age = ([DateTime]::Now - [DateTime]::Parse($pendingPR.createdAt)).Days
+                Write-Host "DEBUG - Pending: #$($pendingPR.number) $($pendingPR.title) (created $age days ago)" -ForegroundColor Magenta
+            }
+        }
+    } catch {
+        if ($Debug) { Write-Host "DEBUG - Could not fetch pending review PRs: $($_.Exception.Message)" -ForegroundColor Yellow }
+        $pendingReviewPRs = @()
+    }
+}
+
+# Generate output
+if ($Format -eq "json") {
+    $output = @{
+        date = $todayLocalStr
+        user = $currentUser
+        created_prs = $createdPRs
+        closed_prs = $closedPRs
+        reviewed_prs = $reviewedPRs
+        pending_review_prs = $pendingReviewPRs
+        summary = @{
+            created_count = $createdPRs.Count
+            closed_count = $closedPRs.Count
+            reviewed_count = $reviewedPRs.Count
+            pending_review_count = $pendingReviewPRs.Count
+            total_activity = $createdPRs.Count + $closedPRs.Count + $reviewedPRs.Count
+        }
+    } | ConvertTo-Json -Depth 10
+} elseif ($Format -eq "html") {
+    $output = "&lt;h2&gt;📊 GitHub PR Summary for $todayLocalStr&lt;/h2&gt;`n"
+    $output += "&lt;hr&gt;`n"
+    
+    # PRs Created section
+    if ($createdPRs.Count -gt 0) {
+        $output += "&lt;h3&gt;📝 PRs Created $dateLabel ($($createdPRs.Count)):&lt;/h3&gt;`n&lt;ul&gt;`n"
+        foreach ($pr in $createdPRs) {
+            $output += "&lt;li&gt;&lt;a href=`"$($pr.url)`"&gt;$($pr.title)&lt;/a&gt;&lt;/li&gt;`n"
+        }
+        $output += "&lt;/ul&gt;`n"
+    }
+    
+    # PRs Closed section
+    if ($closedPRs.Count -gt 0) {
+        $output += "&lt;h3&gt;✅ PRs Closed $dateLabel ($($closedPRs.Count)):&lt;/h3&gt;`n&lt;ul&gt;`n"
+        foreach ($pr in $closedPRs) {
+            $output += "&lt;li&gt;&lt;a href=`"$($pr.url)`"&gt;$($pr.title)&lt;/a&gt;&lt;/li&gt;`n"
+        }
+        $output += "&lt;/ul&gt;`n"
+    }
+    
+    # PRs Reviewed section - show ALL reviewed PRs with merge status
+    if ($reviewedPRs.Count -gt 0) {
+        $output += "&lt;h3&gt;👀 PRs Reviewed $dateLabel ($($reviewedPRs.Count)):&lt;/h3&gt;`n&lt;ul&gt;`n"
+        foreach ($pr in $reviewedPRs) {
+            # Get merge status for each PR
+            $mergeStatus = ""
+            try {
+                $prDetails = gh pr view $pr.number --repo $pr.repository.nameWithOwner --json state,mergedAt 2&gt;$null | ConvertFrom-Json
+                if ($prDetails -and $prDetails.mergedAt) {
+                    $mergeStatus = " ✅ merged"
+                } elseif ($prDetails -and $prDetails.state -eq "CLOSED") {
+                    $mergeStatus = " ❌ closed"
+                } elseif ($prDetails -and $prDetails.state -eq "OPEN") {
+                    $mergeStatus = " 🔄 open"
+                }
+            } catch {
+                # Fallback to basic state if PR view fails
+                $mergeStatus = if ($pr.state -eq "closed") { " ❌ closed" } else { " 🔄 open" }
+            }
+            
+            $repoName = if ($pr.repository.nameWithOwner) { $pr.repository.nameWithOwner } else { $pr.repository.name }
+            $output += "&lt;li&gt;&lt;a href=`"$($pr.url)`"&gt;$($pr.title)&lt;/a&gt; ($repoName)$mergeStatus&lt;/li&gt;`n"
+        }
+        $output += "&lt;/ul&gt;`n"
+    }
+    
+    # PRs Awaiting Review section
+    if ($pendingReviewPRs.Count -gt 0) {
+        $output += "&lt;h3&gt;⏳ PRs Awaiting Your Review ($($pendingReviewPRs.Count)):&lt;/h3&gt;`n&lt;ul&gt;`n"
+        foreach ($pr in $pendingReviewPRs) {
+            $repoName = if ($pr.repository.nameWithOwner) { $pr.repository.nameWithOwner } else { $pr.repository.name }
+            $age = ([DateTime]::Now - [DateTime]::Parse($pr.createdAt)).Days
+            $ageStr = if ($age -eq 0) { "today" } elseif ($age -eq 1) { "1 day ago" } else { "$age days ago" }
+            $draftStr = if ($pr.isDraft) { " [DRAFT]" } else { "" }
+            $output += "&lt;li&gt;&lt;a href=`"$($pr.url)`"&gt;$($pr.title)&lt;/a&gt; ($repoName) - created $ageStr$draftStr&lt;/li&gt;`n"
+        }
+        $output += "&lt;/ul&gt;`n"
+    }
+    
+    $totalActivity = $createdPRs.Count + $closedPRs.Count + $reviewedPRs.Count
+    $pendingNote = if ($pendingReviewPRs.Count -gt 0) { ", $($pendingReviewPRs.Count) awaiting review" } else { "" }
+    $output += "&lt;p&gt;&lt;strong&gt;🎯 Total PR Activity: $totalActivity items ($($createdPRs.Count) created, $($closedPRs.Count) closed, $($reviewedPRs.Count) reviewed)$pendingNote&lt;/strong&gt;&lt;/p&gt;`n"
+} else {
+    # Text format
+    $output = "`n📊 GitHub PR Summary for $todayLocalStr`n"
+    $output += "="*50 + "`n"
+    
+    # PRs Created section
+    if ($createdPRs.Count -gt 0) {
+        $output += "📝 PRs Created $dateLabel ($($createdPRs.Count)):`n"
+        foreach ($pr in $createdPRs) {
+            $output += "* [$($pr.title)]($($pr.url))`n"
+        }
+        $output += "`n"
+    }
+    
+    # PRs Closed section
+    if ($closedPRs.Count -gt 0) {
+        $output += "✅ PRs Closed $dateLabel ($($closedPRs.Count)):`n"
+        foreach ($pr in $closedPRs) {
+            $output += "* [$($pr.title)]($($pr.url))`n"
+        }
+        $output += "`n"
+    }
+    
+    # PRs Reviewed section - show ALL reviewed PRs with merge status
+    if ($reviewedPRs.Count -gt 0) {
+        $output += "👀 PRs Reviewed $dateLabel ($($reviewedPRs.Count)):`n"
+        foreach ($pr in $reviewedPRs) {
+            # Get merge status for each PR
+            $mergeStatus = ""
+            try {
+                $prDetails = gh pr view $pr.number --repo $pr.repository.nameWithOwner --json state,mergedAt 2&gt;$null | ConvertFrom-Json
+                if ($prDetails -and $prDetails.mergedAt) {
+                    $mergeStatus = " ✅ merged"
+                } elseif ($prDetails -and $prDetails.state -eq "CLOSED") {
+                    $mergeStatus = " ❌ closed"
+                } elseif ($prDetails -and $prDetails.state -eq "OPEN") {
+                    $mergeStatus = " 🔄 open"
+                }
+            } catch {
+                # Fallback to basic state if PR view fails
+                $mergeStatus = if ($pr.state -eq "closed") { " ❌ closed" } else { " 🔄 open" }
+            }
+            
+            $repoName = if ($pr.repository.nameWithOwner) { $pr.repository.nameWithOwner } else { $pr.repository.name }
+            if ($Verbose) {
+                $output += "* [$($pr.title)]($($pr.url)) - $repoName #$($pr.number)$mergeStatus`n"
+            } else {
+                $output += "* [$($pr.title)]($($pr.url))$mergeStatus`n"
+            }
+        }
+        $output += "`n"
+    }
+    
+    # PRs Awaiting Review section
+    if ($pendingReviewPRs.Count -gt 0) {
+        $output += "⏳ PRs Awaiting Your Review ($($pendingReviewPRs.Count)):`n"
+        foreach ($pr in $pendingReviewPRs) {
+            $age = ([DateTime]::Now - [DateTime]::Parse($pr.createdAt)).Days
+            $ageStr = if ($age -eq 0) { "today" } elseif ($age -eq 1) { "1 day ago" } else { "$age days ago" }
+            $draftStr = if ($pr.isDraft) { " [DRAFT]" } else { "" }
+            
+            if ($Verbose) {
+                $repoName = if ($pr.repository.nameWithOwner) { $pr.repository.nameWithOwner } else { $pr.repository.name }
+                $output += "* [$($pr.title)]($($pr.url)) - $repoName #$($pr.number) (created $ageStr)$draftStr`n"
+            } else {
+                $output += "* [$($pr.title)]($($pr.url)) (created $ageStr)$draftStr`n"
+            }
+        }
+        $output += "`n"
+    }
+    
+    $totalActivity = $createdPRs.Count + $closedPRs.Count + $reviewedPRs.Count
+    $pendingNote = if ($pendingReviewPRs.Count -gt 0) { ", $($pendingReviewPRs.Count) awaiting review" } else { "" }
+    $output += "🎯 Total PR Activity: $totalActivity items ($($createdPRs.Count) created, $($closedPRs.Count) closed, $($reviewedPRs.Count) reviewed)$pendingNote`n"
+}
+
+# Output results
+if ($SaveTo) {
+    $output | Out-File -FilePath $SaveTo -Encoding UTF8
+    Write-Host "✅ Output saved to: $SaveTo" -ForegroundColor Green
+}
+
+if ($Clipboard) {
+    if ($Format -eq "html") {
+        # For HTML format, copy as both text and HTML to clipboard
+        Add-Type -AssemblyName System.Windows.Forms
+        $dataObject = New-Object System.Windows.Forms.DataObject
+        $dataObject.SetText($output, [System.Windows.Forms.TextDataFormat]::Html)
+        $dataObject.SetText(($output -replace '&lt;[^&gt;]+&gt;',''), [System.Windows.Forms.TextDataFormat]::Text)
+        [System.Windows.Forms.Clipboard]::SetDataObject($dataObject)
+        Write-Host "✅ Output copied to clipboard (HTML + Text)" -ForegroundColor Green
+    } else {
+        Set-Clipboard -Value $output
+        Write-Host "✅ Output copied to clipboard" -ForegroundColor Green
+    }
+}
+
+if ($Preview) {
+    if ($Format -eq "html") {
+        $tempFile = [System.IO.Path]::GetTempFileName() + ".html"
+        $output | Out-File -FilePath $tempFile -Encoding UTF8
+        Start-Process $tempFile
+        Write-Host "✅ Preview opened in browser: $tempFile" -ForegroundColor Green
+    } elseif ($Format -eq "text" -or $Format -eq "markdown") {
+        $tempFile = [System.IO.Path]::GetTempFileName() + ".md"
+        $output | Out-File -FilePath $tempFile -Encoding UTF8
+        code $tempFile
+        Write-Host "✅ Preview opened in VS Code: $tempFile" -ForegroundColor Green
+    }
+}
+
+if (-not $SaveTo -and -not $Clipboard -and -not $Preview) {
+    Write-Output $output
+}
+</code></pre></div></div>
+
+
+      <footer class="site-footer">
+        
+        <span class="site-footer-credits">This page was generated by <a href="https://pages.github.com">GitHub Pages</a>.</span>
+      </footer>
+    </main>
+  </body>
+</html>
