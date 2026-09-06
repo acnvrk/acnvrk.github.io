@@ -1,0 +1,44 @@
+name: Close pull requests
+
+# This repository holds generated output that is force-pushed on every build,
+# so a pull request here can never be merged usefully. GitHub offers no setting
+# to disable pull requests on a public repository, so close them on arrival
+# with an explanation instead of leaving them to sit unanswered.
+on:
+  pull_request_target:
+    types: [opened, reopened]
+
+permissions:
+  pull-requests: write
+
+# Deliberately does not check out or run any code from the pull request; it
+# only posts a comment and closes, so pull_request_target's write access is
+# not exposed to a contributor's branch.
+jobs:
+  close:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.num
+              body: [
+                "Thanks for the interest, butept pull requests.",
+                "",
+                "It holds generated output onprivate source",
+                "repository and force-pushed here on every build, so this change would be",
+                "overwritten by the next builource it came from.",
+                "",
+                "If you have spotted a mistakishore@usesilo.com>",
+                "with the page URL and what looks wrong. See CONTRIBUTING.md for details.",
+              ].join("\n"),
+            });
+            await github.rest.pulls.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number,
+              state: "closed",
+            });
